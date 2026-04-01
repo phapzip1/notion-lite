@@ -1,9 +1,20 @@
 package main
 
+/*
+#cgo LDFLAGS: -L${SRCDIR}/out/debug/ -lyjs_binding
+#include <stdlib.h>
+void* yrs_doc_new();
+void yrs_doc_free(void* doc);
+char* yrs_doc_get(void* doc);
+void yrs_doc_insert(void* doc, const char* input);
+*/
+import "C"
+
 import (
 	"fmt"
 	"net/http"
 	"os"
+	"unsafe"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -20,6 +31,18 @@ func main() {
 	}
 
 	router := chi.NewRouter()
+
+	doc := C.yrs_doc_new()
+	
+	input := C.CString("Hello from go")
+	C.yrs_doc_insert(doc, input)
+
+	result := C.yrs_doc_get(doc)
+	fmt.Println(C.GoString(result))
+	fmt.Println(doc)
+
+	C.free(unsafe.Pointer(result))
+	C.yrs_doc_free(doc)
 
 	router.Get("/", helloWorld)
 
