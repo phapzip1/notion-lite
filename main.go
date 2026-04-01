@@ -11,17 +11,77 @@ void yrs_doc_insert(void* doc, const char* input);
 import "C"
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"unsafe"
 
+	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
 )
 
+func responseJson(w http.ResponseWriter, statusCode int, payload any) {
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	err := json.NewEncoder(w).Encode(payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func responseError(w http.ResponseWriter, statusCode int, err error) {
+	payload := struct {
+		Message string `json:"message"`
+		Detail  string `json:"detail"`
+	}{
+		Message: "error",
+		Detail:  err.Error(),
+	}
+
+	responseJson(w, statusCode, payload)
+}
+
 func helloWorld(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Hello world!"))
+	responseJson(w, http.StatusOK, struct {
+		Message string `json:"message"`
+	}{
+		Message: "Hello world!",
+	})
+}
+
+func handleWs(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		fmt.Printf("%v\n", err.Error())
+		return
+	}
+
+	defer conn.CloseNow()
+
+	ctx := conn.CloseRead(context.Background())
+
+	for {
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+
+			if websocket.CloseStatus(err) == websocket.StatusAbnormalClosure ||
+				websocket.CloseStatus(err) == websocket.StatusGoingAway {
+				return
+			}
+
+			if err != nil {
+				responseError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+	}
 }
 
 func main() {
@@ -32,19 +92,8 @@ func main() {
 
 	router := chi.NewRouter()
 
-	doc := C.yrs_doc_new()
-	
-	input := C.CString("Hello from go")
-	C.yrs_doc_insert(doc, input)
-
-	result := C.yrs_doc_get(doc)
-	fmt.Println(C.GoString(result))
-	fmt.Println(doc)
-
-	C.free(unsafe.Pointer(result))
-	C.yrs_doc_free(doc)
-
 	router.Get("/", helloWorld)
+	router.Get("/ws", handleWs)
 
 	server := http.Server{
 		Handler: router,
@@ -57,7 +106,7 @@ func main() {
 		runChan <- server.ListenAndServe()
 	}()
 
-	fmt.Printf("server started at %v:%v", "", port)
+	fmt.Printf("server started at %v:%v\n", "", port)
 
 	err := <-runChan
 
