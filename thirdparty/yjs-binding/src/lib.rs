@@ -1,11 +1,21 @@
 use std::ffi::{CString};
 use std::os::raw::c_char;
-use yrs::{Doc, GetString, Text, Transact };
+use yrs::{Doc, Map, GetString, Text, Transact, WriteTxn};
 use yrs::types::ToJson;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn yrs_doc_new() -> *mut Doc {
-    Box::into_raw(Box::new(Doc::new()))
+    let doc = Doc::new();
+
+    {
+        let mut txn = doc.transact_mut();
+        let root = txn.get_or_insert_map("root");
+        root.insert(&mut txn, "title", "Untitled");
+
+        txn.get_or_insert_map("blocks");
+    }
+
+    Box::into_raw(Box::new(doc))
 }
 
 #[unsafe(no_mangle)]

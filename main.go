@@ -13,10 +13,11 @@ import "C"
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
+	"unsafe"
 
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
@@ -52,8 +53,19 @@ func helloWorld(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, msg []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return c.Write(ctx, websocket.MessageText, msg)
+}
+
 func handleWs(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, nil)
+	chi.URLParam(r, "docID")
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: []string{"http://localhost:5173"},
+	})
 	if err != nil {
 		fmt.Printf("%v\n", err.Error())
 		return
@@ -63,26 +75,14 @@ func handleWs(w http.ResponseWriter, r *http.Request) {
 
 	ctx := conn.CloseRead(context.Background())
 
-	for {
-		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-			if errors.Is(err, context.Canceled) {
-				return
-			}
+	writeTimeout(ctx, time.Second*5, conn, []byte("haha"))
 
-			if websocket.CloseStatus(err) == websocket.StatusAbnormalClosure ||
-				websocket.CloseStatus(err) == websocket.StatusGoingAway {
-				return
-			}
-
-			if err != nil {
-				responseError(w, http.StatusInternalServerError, err)
-				return
-			}
-		}
+	for err := range ctx.Done() {
+		fmt.Printf("%v\n", err)
 	}
 }
+
+var doc unsafe.Pointer
 
 func main() {
 	port := "8080"
@@ -93,7 +93,10 @@ func main() {
 	router := chi.NewRouter()
 
 	router.Get("/", helloWorld)
-	router.Get("/ws", handleWs)
+	router.Get("/ws/{docID}", handleWs)
+
+	doc = C.yrs_doc_new()
+	defer C.yrs_doc_free(doc)
 
 	server := http.Server{
 		Handler: router,
